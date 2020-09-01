@@ -1,9 +1,10 @@
 package stat
 
 import (
+	"sync/atomic"
+
 	"github.com/alibaba/sentinel-golang/core/base"
 	sbase "github.com/alibaba/sentinel-golang/core/stat/base"
-	"sync/atomic"
 )
 
 type BaseStatNode struct {
@@ -34,6 +35,10 @@ func (n *BaseStatNode) MetricsOnCondition(predicate base.TimePredicate) []*base.
 
 func (n *BaseStatNode) GetQPS(event base.MetricEvent) float64 {
 	return n.metric.GetQPS(event)
+}
+
+func (n *BaseStatNode) GetPreviousQPS(event base.MetricEvent) float64 {
+	return n.metric.GetPreviousQPS(event)
 }
 
 func (n *BaseStatNode) GetSum(event base.MetricEvent) int64 {

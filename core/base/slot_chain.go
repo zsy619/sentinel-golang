@@ -1,12 +1,12 @@
 package base
 
 import (
+	"sync"
+
 	"github.com/alibaba/sentinel-golang/logging"
 	"github.com/alibaba/sentinel-golang/util"
-	"sync"
+	"github.com/pkg/errors"
 )
-
-var logger = logging.GetDefaultLogger()
 
 // StatPrepareSlot is responsible for some preparation before statistic
 // For example: init structure and so on
@@ -40,8 +40,9 @@ type StatSlot interface {
 	// StatSlots will do some statistic logic, such as QPS、log、etc
 	// blockError introduce the block detail
 	OnEntryBlocked(ctx *EntryContext, blockError *BlockError)
-	// onComplete function will be invoked when chain exits.
-	// The request may be executed successful or blocked or internal error
+	// OnCompleted function will be invoked when chain exits.
+	// The semantics of OnCompleted is the entry passed and completed
+	// Note: blocked entry will not call this function
 	OnCompleted(ctx *EntryContext)
 }
 
@@ -52,7 +53,7 @@ type SlotChain struct {
 	ruleChecks []RuleCheckSlot
 	stats      []StatSlot
 	// EntryContext Pool, used for reuse EntryContext object
-	pool sync.Pool
+	ctxPool sync.Pool
 }
 
 func NewSlotChain() *SlotChain {
@@ -60,17 +61,26 @@ func NewSlotChain() *SlotChain {
 		statPres:   make([]StatPrepareSlot, 0, 5),
 		ruleChecks: make([]RuleCheckSlot, 0, 5),
 		stats:      make([]StatSlot, 0, 5),
-		pool: sync.Pool{
+		ctxPool: sync.Pool{
 			New: func() interface{} {
-				return NewEmptyEntryContext()
+				ctx := NewEmptyEntryContext()
+				ctx.RuleCheckResult = NewTokenResultPass()
+				ctx.Data = make(map[interface{}]interface{})
+				ctx.Input = &SentinelInput{
+					AcquireCount: 1,
+					Flag:         0,
+					Args:         make([]interface{}, 0),
+					Attachments:  make(map[interface{}]interface{}),
+				}
+				return ctx
 			},
 		},
 	}
 }
 
-// Get a EntryContext from EntryContext pool, if pool doesn't have enough EntryContext then new one.
+// Get a EntryContext from EntryContext ctxPool, if ctxPool doesn't have enough EntryContext then new one.
 func (sc *SlotChain) GetPooledContext() *EntryContext {
-	ctx := sc.pool.Get().(*EntryContext)
+	ctx := sc.ctxPool.Get().(*EntryContext)
 	ctx.startTime = util.CurrentTimeMillis()
 	return ctx
 }
@@ -78,7 +88,7 @@ func (sc *SlotChain) GetPooledContext() *EntryContext {
 func (sc *SlotChain) RefurbishContext(c *EntryContext) {
 	if c != nil {
 		c.Reset()
-		sc.pool.Put(c)
+		sc.ctxPool.Put(c)
 	}
 }
 
@@ -120,7 +130,8 @@ func (sc *SlotChain) Entry(ctx *EntryContext) *TokenResult {
 	// If happened, need to add TokenResult in EntryContext
 	defer func() {
 		if err := recover(); err != nil {
-			logger.Panicf("Sentinel internal panic in SlotChain, err: %+v", err)
+			logging.Panicf("Sentinel internal panic in SlotChain, err: %+v", err)
+			ctx.SetError(errors.Errorf("%+v", err))
 			return
 		}
 	}()
@@ -135,24 +146,30 @@ func (sc *SlotChain) Entry(ctx *EntryContext) *TokenResult {
 
 	// execute rule based checking slot
 	rcs := sc.ruleChecks
-	ruleCheckRet := NewTokenResultPass()
+	var ruleCheckRet *TokenResult
 	if len(rcs) > 0 {
 		for _, s := range rcs {
 			sr := s.Check(ctx)
-			ctx.Output.LastResult = sr
+			if sr == nil {
+				// nil equals to check pass
+				continue
+			}
 			// check slot result
-			if sr.status == ResultStatusBlocked {
+			if sr.IsBlocked() {
 				ruleCheckRet = sr
 				break
 			}
-
-			// This slot passed, continue.
 		}
 	}
-	ctx.Output.LastResult = ruleCheckRet
+	if ruleCheckRet == nil {
+		ctx.RuleCheckResult.ResetToPass()
+	} else {
+		ctx.RuleCheckResult = ruleCheckRet
+	}
 
 	// execute statistic slot
 	ss := sc.stats
+	ruleCheckRet = ctx.RuleCheckResult
 	if len(ss) > 0 {
 		for _, s := range ss {
 			// indicate the result of rule based checking slot.
@@ -168,6 +185,14 @@ func (sc *SlotChain) Entry(ctx *EntryContext) *TokenResult {
 }
 
 func (sc *SlotChain) exit(ctx *EntryContext) {
+	if ctx == nil || ctx.Entry() == nil {
+		logging.Errorf("nil ctx or nil associated entry")
+		return
+	}
+	// The OnCompleted is called only when entry passed
+	if ctx.IsBlocked() {
+		return
+	}
 	for _, s := range sc.stats {
 		s.OnCompleted(ctx)
 	}

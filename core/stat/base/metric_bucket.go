@@ -2,14 +2,15 @@ package base
 
 import (
 	"fmt"
-	"github.com/alibaba/sentinel-golang/core/base"
 	"sync/atomic"
+
+	"github.com/alibaba/sentinel-golang/core/base"
 )
 
 // MetricBucket represents the entity to record metrics per minimum time unit (i.e. the bucket time span).
 // Note that all operations of the MetricBucket are required to be thread-safe.
 type MetricBucket struct {
-	// value of statistic
+	// Value of statistic
 	counter [base.MetricEventTotal]int64
 	minRt   int64
 }

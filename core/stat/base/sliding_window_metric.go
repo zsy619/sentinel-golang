@@ -2,9 +2,11 @@ package base
 
 import (
 	"fmt"
-	"github.com/alibaba/sentinel-golang/core/base"
-	"github.com/alibaba/sentinel-golang/util"
 	"sync/atomic"
+
+	"github.com/alibaba/sentinel-golang/core/base"
+	"github.com/alibaba/sentinel-golang/logging"
+	"github.com/alibaba/sentinel-golang/util"
 )
 
 // SlidingWindowMetric represents the sliding window metric wrapper.
@@ -44,11 +46,6 @@ func NewSlidingWindowMetric(sampleCount, intervalInMs uint32, real *BucketLeapAr
 		panic(fmt.Sprintf("The interval(%d) of SlidingWindowMetric is greater than parent BucketLeapArray(%d).", intervalInMs, parentIntervalInMs))
 	}
 
-	// 10 * 1000 ms == parent
-	if parentIntervalInMs%intervalInMs != 0 {
-		panic(fmt.Sprintf("SlidingWindowMetric's intervalInMs(%d) is not divisible by real BucketLeapArray's intervalInMs(%d).", intervalInMs, parentIntervalInMs))
-	}
-
 	return &SlidingWindowMetric{
 		bucketLengthInMs: bucketLengthInMs,
 		sampleCount:      sampleCount,
@@ -70,17 +67,17 @@ func (m *SlidingWindowMetric) getIntervalInSecond() float64 {
 	return float64(m.intervalInMs) / 1000.0
 }
 
-func (m *SlidingWindowMetric) count(event base.MetricEvent, values []*bucketWrap) int64 {
+func (m *SlidingWindowMetric) count(event base.MetricEvent, values []*BucketWrap) int64 {
 	ret := int64(0)
 	for _, ww := range values {
-		mb := ww.value.Load()
+		mb := ww.Value.Load()
 		if mb == nil {
-			logger.Error("Illegal state: current bucket value is nil when summing count")
+			logging.Error("Illegal state: current bucket Value is nil when summing count")
 			continue
 		}
 		counter, ok := mb.(*MetricBucket)
 		if !ok {
-			logger.Errorf("Fail to cast data value(%+v) to MetricBucket type", mb)
+			logging.Errorf("Fail to cast data Value(%+v) to MetricBucket type", mb)
 			continue
 		}
 		ret += counter.Get(event)
@@ -104,6 +101,10 @@ func (m *SlidingWindowMetric) GetQPS(event base.MetricEvent) float64 {
 	return m.getQPSWithTime(util.CurrentTimeMillis(), event)
 }
 
+func (m *SlidingWindowMetric) GetPreviousQPS(event base.MetricEvent) float64 {
+	return m.getQPSWithTime(util.CurrentTimeMillis()-uint64(m.bucketLengthInMs), event)
+}
+
 func (m *SlidingWindowMetric) getQPSWithTime(now uint64, event base.MetricEvent) float64 {
 	return float64(m.getSumWithTime(now, event)) / m.getIntervalInSecond()
 }
@@ -116,14 +117,14 @@ func (m *SlidingWindowMetric) GetMaxOfSingleBucket(event base.MetricEvent) int64
 	})
 	var curMax int64 = 0
 	for _, w := range satisfiedBuckets {
-		mb := w.value.Load()
+		mb := w.Value.Load()
 		if mb == nil {
-			logger.Error("Illegal state: current bucket value is nil when GetMaxOfSingleBucket")
+			logging.Error("Illegal state: current bucket Value is nil when GetMaxOfSingleBucket")
 			continue
 		}
 		counter, ok := mb.(*MetricBucket)
 		if !ok {
-			logger.Errorf("Failed to cast data value(%+v) to MetricBucket type", mb)
+			logging.Errorf("Failed to cast data Value(%+v) to MetricBucket type", mb)
 			continue
 		}
 		v := counter.Get(event)
@@ -142,14 +143,14 @@ func (m *SlidingWindowMetric) MinRT() float64 {
 	})
 	minRt := base.DefaultStatisticMaxRt
 	for _, w := range satisfiedBuckets {
-		mb := w.value.Load()
+		mb := w.Value.Load()
 		if mb == nil {
-			logger.Error("Illegal state: current bucket value is nil when calculating minRT")
+			logging.Error("Illegal state: current bucket Value is nil when calculating minRT")
 			continue
 		}
 		counter, ok := mb.(*MetricBucket)
 		if !ok {
-			logger.Errorf("Failed to cast data value(%+v) to MetricBucket type", mb)
+			logging.Errorf("Failed to cast data Value(%+v) to MetricBucket type", mb)
 			continue
 		}
 		v := counter.MinRt()
@@ -173,14 +174,14 @@ func (m *SlidingWindowMetric) SecondMetricsOnCondition(predicate base.TimePredic
 	ws := m.real.ValuesConditional(util.CurrentTimeMillis(), predicate)
 
 	// Aggregate second-level MetricItem (only for stable metrics)
-	wm := make(map[uint64][]*bucketWrap)
+	wm := make(map[uint64][]*BucketWrap)
 	for _, w := range ws {
-		bucketStart := atomic.LoadUint64(&w.bucketStart)
+		bucketStart := atomic.LoadUint64(&w.BucketStart)
 		secStart := bucketStart - bucketStart%1000
 		if arr, hasData := wm[secStart]; hasData {
 			wm[secStart] = append(arr, w)
 		} else {
-			wm[secStart] = []*bucketWrap{w}
+			wm[secStart] = []*BucketWrap{w}
 		}
 	}
 	items := make([]*base.MetricItem, 0)
@@ -197,18 +198,18 @@ func (m *SlidingWindowMetric) SecondMetricsOnCondition(predicate base.TimePredic
 
 // metricItemFromBuckets aggregates multiple bucket wrappers (based on the same startTime in second)
 // to the single MetricItem.
-func (m *SlidingWindowMetric) metricItemFromBuckets(ts uint64, ws []*bucketWrap) *base.MetricItem {
+func (m *SlidingWindowMetric) metricItemFromBuckets(ts uint64, ws []*BucketWrap) *base.MetricItem {
 	item := &base.MetricItem{Timestamp: ts}
 	var allRt int64 = 0
 	for _, w := range ws {
-		mi := w.value.Load()
+		mi := w.Value.Load()
 		if mi == nil {
-			logger.Error("Get nil bucket when generating MetricItem from buckets")
+			logging.Error("Get nil bucket when generating MetricItem from buckets")
 			return nil
 		}
 		mb, ok := mi.(*MetricBucket)
 		if !ok {
-			logger.Errorf("Failed to cast to MetricBucket type, bucket startTime: %d", w.bucketStart)
+			logging.Errorf("Failed to cast to MetricBucket type, bucket startTime: %d", w.BucketStart)
 			return nil
 		}
 		item.PassQps += uint64(mb.Get(base.MetricEventPass))
@@ -225,15 +226,15 @@ func (m *SlidingWindowMetric) metricItemFromBuckets(ts uint64, ws []*bucketWrap)
 	return item
 }
 
-func (m *SlidingWindowMetric) metricItemFromBucket(w *bucketWrap) *base.MetricItem {
-	mi := w.value.Load()
+func (m *SlidingWindowMetric) metricItemFromBucket(w *BucketWrap) *base.MetricItem {
+	mi := w.Value.Load()
 	if mi == nil {
-		logger.Error("Get nil bucket when generating MetricItem from buckets")
+		logging.Error("Get nil bucket when generating MetricItem from buckets")
 		return nil
 	}
 	mb, ok := mi.(*MetricBucket)
 	if !ok {
-		logger.Errorf("Fail to cast data value to MetricBucket type, bucket startTime: %d", w.bucketStart)
+		logging.Errorf("Fail to cast data Value to MetricBucket type, bucket startTime: %d", w.BucketStart)
 		return nil
 	}
 	completeQps := mb.Get(base.MetricEventComplete)
@@ -242,7 +243,7 @@ func (m *SlidingWindowMetric) metricItemFromBucket(w *bucketWrap) *base.MetricIt
 		BlockQps:    uint64(mb.Get(base.MetricEventBlock)),
 		ErrorQps:    uint64(mb.Get(base.MetricEventError)),
 		CompleteQps: uint64(completeQps),
-		Timestamp:   w.bucketStart,
+		Timestamp:   w.BucketStart,
 	}
 	if completeQps > 0 {
 		item.AvgRt = uint64(mb.Get(base.MetricEventRt) / completeQps)

@@ -2,10 +2,12 @@ package metric
 
 import (
 	"bufio"
-	"github.com/alibaba/sentinel-golang/core/base"
-	"github.com/pkg/errors"
 	"io"
 	"os"
+
+	"github.com/alibaba/sentinel-golang/core/base"
+	"github.com/alibaba/sentinel-golang/logging"
+	"github.com/pkg/errors"
 )
 
 const maxItemAmount = 100000
@@ -104,7 +106,7 @@ func (r *defaultMetricLogReader) readMetricsInOneFile(filename string, offset ui
 		}
 		item, err := base.MetricItemFromFatString(line)
 		if err != nil {
-			logger.Errorf("Failed to convert MetricItem to string: %+v", err)
+			logging.Errorf("Failed to convert MetricItem to string: %+v", err)
 			continue
 		}
 		tsSec := item.Timestamp / 1000
@@ -138,7 +140,7 @@ func (r *defaultMetricLogReader) readMetricsInOneFileByEndTime(filename string, 
 		}
 		item, err := base.MetricItemFromFatString(line)
 		if err != nil {
-			logger.Errorf("Invalid line of metric file: %s, error: %+v", line, err)
+			logging.Errorf("Invalid line of metric file: %s, error: %+v", line, err)
 			continue
 		}
 		tsSec := item.Timestamp / 1000
@@ -174,7 +176,7 @@ func readLine(bufReader *bufio.Reader) (string, error) {
 }
 
 func getLatestSecond(items []*base.MetricItem) uint64 {
-	if items == nil {
+	if items == nil || len(items) == 0 {
 		return 0
 	}
 	return items[len(items)-1].Timestamp / 1000

@@ -1,9 +1,11 @@
 package flow
 
 import (
+	"time"
+
 	"github.com/alibaba/sentinel-golang/core/base"
 	"github.com/alibaba/sentinel-golang/core/stat"
-	"time"
+	"github.com/alibaba/sentinel-golang/logging"
 )
 
 // FlowSlot
@@ -13,17 +15,22 @@ type FlowSlot struct {
 func (s *FlowSlot) Check(ctx *base.EntryContext) *base.TokenResult {
 	res := ctx.Resource.Name()
 	tcs := getTrafficControllerListFor(res)
+	result := ctx.RuleCheckResult
 	if len(tcs) == 0 {
-		return base.NewTokenResultPass()
+		return result
 	}
 
 	// Check rules in order
 	for _, tc := range tcs {
 		if tc == nil {
-			logger.Warnf("nil traffic controller found, res: %s", res)
+			logging.Warnf("nil traffic controller found, res: %s", res)
 			continue
 		}
 		r := canPassCheck(tc, ctx.StatNode, ctx.Input.AcquireCount)
+		if r == nil {
+			// nil means pass
+			continue
+		}
 		if r.Status() == base.ResultStatusBlocked {
 			return r
 		}
@@ -35,7 +42,7 @@ func (s *FlowSlot) Check(ctx *base.EntryContext) *base.TokenResult {
 			continue
 		}
 	}
-	return base.NewTokenResultPass()
+	return result
 }
 
 func canPassCheck(tc *TrafficShapingController, node base.StatNode, acquireCount uint32) *base.TokenResult {

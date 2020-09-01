@@ -3,14 +3,11 @@ package flow
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/alibaba/sentinel-golang/logging"
-	"github.com/pkg/errors"
 	"sync"
-)
 
-// const
-var (
-	logger = logging.GetDefaultLogger()
+	"github.com/alibaba/sentinel-golang/logging"
+	"github.com/alibaba/sentinel-golang/util"
+	"github.com/pkg/errors"
 )
 
 // TrafficControllerGenFunc represents the TrafficShapingController generator function of a specific control behavior.
@@ -28,19 +25,22 @@ var (
 func init() {
 	// Initialize the traffic shaping controller generator map for existing control behaviors.
 	tcGenFuncMap[Reject] = func(rule *FlowRule) *TrafficShapingController {
-		return NewTrafficShapingController(NewDefaultTrafficShapingCalculator(rule.Count), NewDefaultTrafficShapingChecker(rule.MetricType), rule)
+		return NewTrafficShapingController(NewDefaultTrafficShapingCalculator(rule.Count), NewDefaultTrafficShapingChecker(rule), rule)
 	}
 	tcGenFuncMap[Throttling] = func(rule *FlowRule) *TrafficShapingController {
 		return NewTrafficShapingController(NewDefaultTrafficShapingCalculator(rule.Count), NewThrottlingChecker(rule.MaxQueueingTimeMs), rule)
+	}
+	tcGenFuncMap[WarmUp] = func(rule *FlowRule) *TrafficShapingController {
+		return NewTrafficShapingController(NewWarmUpTrafficShapingCalculator(rule), NewDefaultTrafficShapingChecker(rule), rule)
 	}
 }
 
 func logRuleUpdate(m TrafficControllerMap) {
 	bs, err := json.Marshal(rulesFrom(m))
 	if err != nil {
-		logger.Info("[FlowRuleManager] Flow rules loaded")
+		logging.Info("[FlowRuleManager] Flow rules loaded")
 	} else {
-		logger.Infof("[FlowRuleManager] Flow rules loaded: %s", bs)
+		logging.Infof("[FlowRuleManager] Flow rules loaded: %s", bs)
 	}
 }
 
@@ -55,14 +55,20 @@ func onRuleUpdate(rules []*FlowRule) (err error) {
 		}
 	}()
 
-	tcMux.Lock()
-	defer tcMux.Unlock()
-
 	m := buildFlowMap(rules)
 
-	tcMap = m
-	logRuleUpdate(m)
+	start := util.CurrentTimeNano()
+	tcMux.Lock()
+	defer func() {
+		tcMux.Unlock()
+		if r := recover(); r != nil {
+			return
+		}
+		logging.Debugf("Updating flow rule spends %d ns.", util.CurrentTimeNano()-start)
+		logRuleUpdate(m)
+	}()
 
+	tcMap = m
 	return nil
 }
 
@@ -139,13 +145,14 @@ func getTrafficControllerListFor(name string) []*TrafficShapingController {
 
 // NotThreadSafe (should be guarded by the lock)
 func buildFlowMap(rules []*FlowRule) TrafficControllerMap {
-	if len(rules) == 0 {
-		return make(TrafficControllerMap)
-	}
 	m := make(TrafficControllerMap)
+	if len(rules) == 0 {
+		return m
+	}
+
 	for _, rule := range rules {
 		if err := IsValidFlowRule(rule); err != nil {
-			logger.Warnf("Ignoring invalid flow rule: %v, reason: %s", rule, err.Error())
+			logging.Warnf("Ignoring invalid flow rule: %v, reason: %s", rule, err.Error())
 			continue
 		}
 		if rule.LimitOrigin == "" {
@@ -153,12 +160,12 @@ func buildFlowMap(rules []*FlowRule) TrafficControllerMap {
 		}
 		generator, supported := tcGenFuncMap[rule.ControlBehavior]
 		if !supported {
-			logger.Warnf("Ignoring the rule due to unsupported control behavior: %v", rule)
+			logging.Warnf("Ignoring the rule due to unsupported control behavior: %v", rule)
 			continue
 		}
 		tsc := generator(rule)
 		if tsc == nil {
-			logger.Warnf("Ignoring the rule due to bad generated traffic controller: %v", rule)
+			logging.Warnf("Ignoring the rule due to bad generated traffic controller: %v", rule)
 			continue
 		}
 
@@ -215,6 +222,9 @@ func checkControlBehaviorField(rule *FlowRule) error {
 	case WarmUp:
 		if rule.WarmUpPeriodSec <= 0 {
 			return errors.New("invalid warmUpPeriodSec")
+		}
+		if rule.WarmUpColdFactor == 1 {
+			return errors.New("WarmUpColdFactor must be great than 1")
 		}
 		return nil
 	case WarmUpThrottling:

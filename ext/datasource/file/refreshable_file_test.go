@@ -1,16 +1,17 @@
 package file
 
 import (
-	"github.com/alibaba/sentinel-golang/ext/datasource"
-	"github.com/pkg/errors"
-	"github.com/stretchr/testify/assert"
-	tmock "github.com/stretchr/testify/mock"
 	"io/ioutil"
 	"os"
 	"reflect"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/alibaba/sentinel-golang/ext/datasource"
+	"github.com/pkg/errors"
+	"github.com/stretchr/testify/assert"
+	tmock "github.com/stretchr/testify/mock"
 )
 
 const (
@@ -237,6 +238,7 @@ func TestNewFileDataSource_ALL_For_SystemRule(t *testing.T) {
 		mh1.AssertNumberOfCalls(t, "Handle", 2)
 
 		ds.Close()
+		f.Close()
 		time.Sleep(1 * time.Second)
 		e := ds.watcher.Add(TestSystemRulesFile)
 		assert.True(t, e != nil && strings.Contains(e.Error(), "closed"))

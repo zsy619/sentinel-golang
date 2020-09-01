@@ -2,16 +2,26 @@ package main
 
 import (
 	"fmt"
-	sentinel "github.com/alibaba/sentinel-golang/api"
-	"github.com/alibaba/sentinel-golang/core/base"
-	"github.com/alibaba/sentinel-golang/core/flow"
-	"github.com/alibaba/sentinel-golang/util"
 	"log"
 	"math/rand"
+	"testing"
 	"time"
+
+	"github.com/alibaba/sentinel-golang/util"
+
+	"github.com/alibaba/sentinel-golang/core/flow"
+
+	sentinel "github.com/alibaba/sentinel-golang/api"
+	"github.com/alibaba/sentinel-golang/core/base"
 )
 
-func main() {
+func Benchmark_qps(b *testing.B) {
+	for i := 0; i < b.N; i++ {
+		doTest()
+	}
+}
+
+func doTest() {
 	// We should initialize Sentinel first.
 	err := sentinel.InitDefault()
 	if err != nil {
@@ -22,17 +32,15 @@ func main() {
 		{
 			Resource:        "some-test",
 			MetricType:      flow.QPS,
-			Count:           10,
-			ControlBehavior: flow.Reject,
+			Count:           100,
+			ControlBehavior: flow.WarmUp,
+			WarmUpPeriodSec: 10,
 		},
 	})
 	if err != nil {
 		log.Fatalf("Unexpected error: %+v", err)
 		return
 	}
-
-	ch := make(chan struct{})
-
 	for i := 0; i < 10; i++ {
 		go func() {
 			for {
@@ -52,5 +60,5 @@ func main() {
 			}
 		}()
 	}
-	<-ch
+	time.Sleep(time.Second * 5)
 }

@@ -2,12 +2,14 @@ package metric
 
 import (
 	"encoding/binary"
-	"github.com/alibaba/sentinel-golang/core/base"
-	"github.com/alibaba/sentinel-golang/util"
-	"github.com/pkg/errors"
 	"io"
 	"os"
 	"sync"
+
+	"github.com/alibaba/sentinel-golang/core/base"
+	"github.com/alibaba/sentinel-golang/logging"
+	"github.com/alibaba/sentinel-golang/util"
+	"github.com/pkg/errors"
 )
 
 const offsetNotFound = -1
@@ -54,7 +56,7 @@ func (s *DefaultMetricSearcher) searchOffsetAndRead(beginTimeMs uint64, doRead f
 	// If cache is not up-to-date, we'll read from the initial position (offset 0 of the first file).
 	offsetStart, fileNo, err := s.getOffsetStartAndFileIdx(filenames, beginTimeMs)
 	if err != nil {
-		logger.Warnf("Failed to getOffsetStartAndFileIdx, beginTimeMs=%d, error: %+v", beginTimeMs, err)
+		logging.Warnf("Failed to getOffsetStartAndFileIdx, beginTimeMs=%d, error: %+v", beginTimeMs, err)
 	}
 	fileAmount := uint32(len(filenames))
 	for i := fileNo; i < fileAmount; i++ {
@@ -63,7 +65,7 @@ func (s *DefaultMetricSearcher) searchOffsetAndRead(beginTimeMs uint64, doRead f
 		// If offset = -1, it indicates that current file (i) does not satisfy the condition.
 		offset, err := s.findOffsetToStart(filename, beginTimeMs, offsetStart)
 		if err != nil {
-			logger.Warnf("Failed to findOffsetToStart, will try next file. Current beginTimeMs=%d, filename: %s, offsetStart: %d, err: %+v",
+			logging.Warnf("Failed to findOffsetToStart, will try next file. Current beginTimeMs=%d, filename: %s, offsetStart: %d, err: %+v",
 				beginTimeMs, filename, offsetStart, err)
 			continue
 		}

@@ -1,11 +1,12 @@
 package flow
 
 import (
-	"github.com/alibaba/sentinel-golang/core/base"
-	"github.com/alibaba/sentinel-golang/util"
 	"math"
 	"sync/atomic"
 	"time"
+
+	"github.com/alibaba/sentinel-golang/core/base"
+	"github.com/alibaba/sentinel-golang/util"
 )
 
 const nanoUnitOffset = time.Second / time.Nanosecond
@@ -30,10 +31,10 @@ func NewThrottlingChecker(timeoutMs uint32) *ThrottlingChecker {
 func (c *ThrottlingChecker) DoCheck(_ base.StatNode, acquireCount uint32, threshold float64) *base.TokenResult {
 	// Pass when acquire count is less or equal than 0.
 	if acquireCount <= 0 {
-		return base.NewTokenResultPass()
+		return nil
 	}
 	if threshold <= 0 {
-		return base.NewTokenResultBlocked(base.BlockTypeFlow, "Flow")
+		return base.NewTokenResultBlocked(base.BlockTypeFlow)
 	}
 	// Here we use nanosecond so that we could control the queueing time more accurately.
 	curNano := util.CurrentTimeNano()
@@ -45,11 +46,11 @@ func (c *ThrottlingChecker) DoCheck(_ base.StatNode, acquireCount uint32, thresh
 	if expectedTime <= curNano {
 		// Contention may exist here, but it's okay.
 		atomic.StoreUint64(&c.lastPassedTime, curNano)
-		return base.NewTokenResultPass()
+		return nil
 	}
 	estimatedQueueingDuration := atomic.LoadUint64(&c.lastPassedTime) + interval - util.CurrentTimeNano()
 	if estimatedQueueingDuration > c.maxQueueingTimeNs {
-		return base.NewTokenResultBlocked(base.BlockTypeFlow, "Flow")
+		return base.NewTokenResultBlocked(base.BlockTypeFlow)
 	}
 
 	oldTime := atomic.AddUint64(&c.lastPassedTime, interval)
@@ -57,7 +58,7 @@ func (c *ThrottlingChecker) DoCheck(_ base.StatNode, acquireCount uint32, thresh
 	if estimatedQueueingDuration > c.maxQueueingTimeNs {
 		// Subtract the interval.
 		atomic.AddUint64(&c.lastPassedTime, ^(interval - 1))
-		return base.NewTokenResultBlocked(base.BlockTypeFlow, "Flow")
+		return base.NewTokenResultBlocked(base.BlockTypeFlow)
 	}
 	if estimatedQueueingDuration > 0 {
 		return base.NewTokenResultShouldWait(estimatedQueueingDuration / util.UnixTimeUnitOffset)
